@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Plan Semanal · The hap&d co.</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f3ef; min-height: 100vh; }
+  select, input, textarea, button { font-family: inherit; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f1f1f1; }
+  ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const ORANGE = "#E8631A";
+const ORANGE_DARK = "#c2500e";
+const ORANGE_LIGHT = "#fff4ee";
+const ORANGE_BORDER = "#f5c4a0";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby4sReeqfm0GKxJ4WomymHjr0hLftTVu9pbOwZbgR0JK4tv9WfTlVuX2Vuiujf7XtUSMQ/exec";
+
+const TEAM = [
+  { label: "Head of Training – Samantha Castillo", name: "Samantha Castillo", rol: "Head of Training" },
+  { label: "Ops Manager – Diego Lopez", name: "Diego Lopez", rol: "Ops Manager" },
+  { label: "Maintenance – Julio Flores", name: "Julio Flores", rol: "Maintenance" },
+  { label: "Supply Chain – Cristobal Salinas", name: "Cristobal Salinas", rol: "Supply Chain" },
+  { label: "Culinary – Erick Campuzano", name: "Erick Campuzano", rol: "Culinary" },
+  { label: "Talent – Nayeli Sanjuan", name: "Nayeli Sanjuan", rol: "Talent" },
+  { label: "People – Abraham Focil", name: "Abraham Focil", rol: "People" },
+];
+
+const UBICACIONES = ["Carso", "Samara", "Reforma", "Tlane", "Vallejo Vapiano", "Vallejo Luchitos"];
+const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
+function getWeekNumber(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+function getMondayOfWeek(weekNum, year) {
+  const jan1 = new Date(year, 0, 1);
+  const day1 = jan1.getDay() || 7;
+  const offset = (weekNum - 1) * 7 - (day1 - 1);
+  return new Date(year, 0, 1 + offset);
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+}
+
+function getWeekRange(weekNum, year) {
+  const monday = getMondayOfWeek(weekNum, year);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  return `${formatDate(monday)} – ${formatDate(sunday)}`;
+}
+
+function getDayDate(weekNum, year, dayIdx) {
+  const monday = getMondayOfWeek(weekNum, year);
+  const d = new Date(monday); d.setDate(monday.getDate() + dayIdx);
+  return d;
+}
+
+function isPastMidnight(weekNum, year, dayIdx) {
+  const dayDate = getDayDate(weekNum, year, dayIdx);
+  const dayEnd = new Date(dayDate); dayEnd.setHours(23, 59, 59, 999);
+  return new Date() > dayEnd;
+}
+
+function isFutureDay(weekNum, year, dayIdx) {
+  const dayDate = getDayDate(weekNum, year, dayIdx);
+  const now = new Date();
+  return new Date(dayDate.setHours(0,0,0,0)) > new Date(now.setHours(0,0,0,0));
+}
+
+const emptyDay = () => ({ ubicacion: [], actividades: "", objetivos: "", horario: "", descanso: false, comentario: "" });
+const emptyWeek = () => DAYS.reduce((a, d) => ({ ...a, [d]: emptyDay() }), {});
+
+const inputStyle = { width: "100%", border: "1px solid #e0d6cc", borderRadius: 8, padding: "9px 12px", fontSize: 14, boxSizing: "border-box", outline: "none", background: "#fff", color: "#222", fontFamily: "inherit" };
+const taStyle = { ...inputStyle, resize: "vertical" };
+
+function App() {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentWeek = getWeekNumber(now);
+
+  const [member, setMember] = useState("");
+  const [weekNum, setWeekNum] = useState(currentWeek);
+  const [data, setData] = useState(emptyWeek());
+  const [activeDay, setActiveDay] = useState("Lunes");
+  const [saved, setSaved] = useState(false);
+  const [synced, setSynced] = useState(false);
+  const [view, setView] = useState("form");
+  const [ubOpen, setUbOpen] = useState(false);
+
+  const memberObj = TEAM.find(t => t.name === member);
+
+  useEffect(() => {
+    if (!member) return;
+    const key = `hapdplan_${member}_${currentYear}_w${weekNum}`;
+    const stored = localStorage.getItem(key);
+    setData(stored ? JSON.parse(stored) : emptyWeek());
+  }, [member, weekNum]);
+
+  const saveData = (newData) => {
+    if (!member) return;
+    const key = `hapdplan_${member}_${currentYear}_w${weekNum}`;
+    localStorage.setItem(key, JSON.stringify(newData));
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
+    // Sync to Google Sheet
+    const payload = {
+      member,
+      rol: memberObj?.rol || "",
+      weekNum,
+      weekRange: getWeekRange(weekNum, currentYear),
+      days: DAYS.map(d => ({ day: d, ...newData[d] }))
+    };
+    fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(() => { setSynced(true); setTimeout(() => setSynced(false), 3000); }).catch(() => {});
+  };
+
+  const update = (day, field, val) => {
+    const newData = { ...data, [day]: { ...data[day], [field]: val } };
+    setData(newData); saveData(newData);
+  };
+
+  const toggleUb = (day, ub) => {
+    const cur = data[day].ubicacion || [];
+    update(day, "ubicacion", cur.includes(ub) ? cur.filter(x => x !== ub) : [...cur, ub]);
+  };
+
+  const day = data[activeDay];
+  const dayIdx = DAYS.indexOf(activeDay);
+  const pastMidnight = weekNum <= currentWeek && isPastMidnight(weekNum, currentYear, dayIdx);
+  const futureDay = isFutureDay(weekNum, currentYear, dayIdx);
+  const canComment = !pastMidnight && !futureDay;
+  const completedDays = DAYS.filter(d => data[d].ubicacion?.length || data[d].actividades).length;
+
+  const handleExportCSV = () => {
+    const rows = [
+      ["hap&d co. — Plan Semanal SC"],
+      ["Nombre", member, "Rol", memberObj?.rol, "Semana", weekNum, getWeekRange(weekNum, currentYear)],
+      [],
+      ["Día", "Descanso", "Ubicación", "Actividades", "Objetivos", "Horario", "Comentario de Cierre"],
+      ...DAYS.map(d => {
+        const dd = data[d];
+        return [d, dd.descanso ? "Descanso" : "", (dd.ubicacion||[]).join(", "), dd.actividades, dd.objetivos, dd.horario, dd.comentario];
+      })
+    ];
+    const csv = rows.map(r => r.map(c => `"${(c||"").toString().replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url;
+    a.download = `Plan_${member.replace(/\s+/g,"_")}_Sem${weekNum}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f5f3ef", paddingBottom: 48 }}>
+
+      {/* HEADER */}
+      <div style={{ background: ORANGE, padding: "18px 20px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 700, margin: "0 auto" }}>
+          <div>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 20 }}>The hap&amp;d co.</div>
+            <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, marginTop: 2 }}>Shared Services · Plan Semanal</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["form","summary"].map(v => (
+              <button key={v} onClick={() => setView(v)} style={{ padding: "6px 14px", borderRadius: 20, border: "1.5px solid rgba(255,255,255,0.5)", background: view === v ? "#fff" : "transparent", color: view === v ? ORANGE : "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                {v === "form" ? "Captura" : "Resumen"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* IDENTITY BAR */}
+      <div style={{ background: "#fff", borderBottom: `3px solid ${ORANGE}`, padding: "12px 20px" }}>
+        <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 2, minWidth: 200 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1 }}>Colaborador</span>
+            <select value={member} onChange={e => setMember(e.target.value)} style={inputStyle}>
+              <option value="">— Selecciona tu nombre —</option>
+              {TEAM.map(t => <option key={t.name} value={t.name}>{t.label}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 160 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1 }}>Semana</span>
+            <select value={weekNum} onChange={e => setWeekNum(Number(e.target.value))} style={inputStyle}>
+              {Array.from({ length: 52 }, (_, i) => i + 1).map(w => (
+                <option key={w} value={w}>Sem {w} · {getWeekRange(w, currentYear)}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 9 }}>
+            {member && DAYS.map(d => {
+              const filled = data[d].ubicacion?.length || data[d].actividades;
+              const rest = data[d].descanso;
+              return <div key={d} title={d} style={{ width: 9, height: 9, borderRadius: "50%", background: rest ? "#81c784" : filled ? ORANGE : "#ddd" }} />;
+            })}
+            {saved && <span style={{ fontSize: 12, color: "#4caf50", fontWeight: 700, marginLeft: 4 }}>✓ Guardado</span>}
+            {synced && <span style={{ fontSize: 12, color: "#1976d2", fontWeight: 700, marginLeft: 4 }}>↑ Sincronizado</span>}
+          </div>
+        </div>
+      </div>
+
+      {!member ? (
+        <div style={{ textAlign: "center", padding: "60px 24px", color: "#bbb", fontSize: 16 }}>
+          Selecciona tu nombre para comenzar
+        </div>
+      ) : view === "summary" ? (
+        <SummaryView data={data} weekNum={weekNum} year={currentYear} member={member} memberObj={memberObj} onExport={handleExportCSV} />
+      ) : (
+        <div style={{ maxWidth: 700, margin: "24px auto 0", padding: "0 16px" }}>
+
+          {/* DAY TABS */}
+          <div style={{ display: "flex", background: "#fff", borderRadius: "10px 10px 0 0", border: "1px solid #e5e0d8", borderBottom: "none", overflowX: "auto" }}>
+            {DAYS.map((d, i) => {
+              const filled = data[d].ubicacion?.length || data[d].actividades;
+              const rest = data[d].descanso;
+              const active = d === activeDay;
+              return (
+                <button key={d} onClick={() => { setActiveDay(d); setUbOpen(false); }}
+                  style={{ flex: 1, minWidth: 44, background: active ? "#fff" : "transparent", color: active ? ORANGE : rest ? "#81c784" : filled ? "#888" : "#bbb", border: "none", borderBottom: active ? `3px solid ${ORANGE}` : "3px solid transparent", padding: "11px 4px 9px", cursor: "pointer", fontWeight: active ? 700 : 500, fontSize: 12 }}>
+                  {d.slice(0, 3).toUpperCase()}
+                  {rest && <div style={{ fontSize: 9, marginTop: 1, color: "#81c784" }}>☽</div>}
+                  {!rest && filled && <div style={{ width: 5, height: 5, borderRadius: "50%", background: ORANGE, margin: "2px auto 0" }} />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* DAY CARD */}
+          <div style={{ background: "#fff", border: "1px solid #e5e0d8", borderTop: "none", borderRadius: "0 0 10px 10px" }}>
+            <div style={{ background: day.descanso ? "#e8f5e9" : ORANGE, padding: "13px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span style={{ color: day.descanso ? "#2e7d32" : "#fff", fontWeight: 700, fontSize: 16 }}>{activeDay}</span>
+                <span style={{ color: day.descanso ? "#66bb6a" : "rgba(255,255,255,0.7)", fontSize: 12, marginLeft: 10 }}>{formatDate(getDayDate(weekNum, currentYear, dayIdx))}</span>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+                <input type="checkbox" checked={day.descanso} onChange={e => update(activeDay, "descanso", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#81c784" }} />
+                <span style={{ color: day.descanso ? "#2e7d32" : "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600 }}>Descanso</span>
+              </label>
+            </div>
+
+            {day.descanso ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: "#aaa", fontSize: 15 }}>Día de descanso marcado ☽</div>
+            ) : (
+              <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 16 }}>
+
+                {/* Ubicacion */}
+                <div style={{ position: "relative" }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 6 }}>Ubicación</label>
+                  <div onClick={() => setUbOpen(o => !o)} style={{ border: "1px solid #e0d6cc", borderRadius: 8, padding: "8px 12px", background: "#fff", cursor: "pointer", minHeight: 42, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                    {!(day.ubicacion||[]).length
+                      ? <span style={{ color: "#bbb", fontSize: 13 }}>Selecciona ubicación(es)...</span>
+                      : (day.ubicacion||[]).map(u => <span key={u} style={{ background: ORANGE_LIGHT, color: ORANGE_DARK, border: `1px solid ${ORANGE_BORDER}`, borderRadius: 5, padding: "3px 9px", fontSize: 12, fontWeight: 600 }}>{u}</span>)
+                    }
+                    <span style={{ marginLeft: "auto", color: "#bbb", fontSize: 11 }}>▼</span>
+                  </div>
+                  {ubOpen && (
+                    <div style={{ position: "absolute", zIndex: 100, background: "#f5f3ef", border: "1px solid #ccc", borderRadius: 8, boxShadow: "0 4px 20px rgba(0,0,0,0.15)", top: "calc(100% + 4px)", left: 0, right: 0, padding: 8 }}>
+                      {UBICACIONES.map(u => {
+                        const sel = (day.ubicacion||[]).includes(u);
+                        return (
+                          <div key={u} onClick={() => toggleUb(activeDay, u)} style={{ padding: "10px 12px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, background: sel ? ORANGE_LIGHT : "transparent", marginBottom: 2 }}>
+                            <span style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? ORANGE : "#ccc"}`, background: sel ? ORANGE : "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              {sel && <span style={{ color: "#fff", fontSize: 11 }}>✓</span>}
+                            </span>
+                            <span style={{ fontSize: 14, color: sel ? ORANGE_DARK : "#333", fontWeight: sel ? 700 : 400 }}>{u}</span>
+                          </div>
+                        );
+                      })}
+                      <div onClick={() => setUbOpen(false)} style={{ textAlign: "center", padding: "8px", fontSize: 12, color: "#999", cursor: "pointer", borderTop: "1px solid #eee", marginTop: 4 }}>Cerrar</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Horario */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 6 }}>Horario</label>
+                  <input value={day.horario} onChange={e => update(activeDay, "horario", e.target.value)} style={inputStyle} placeholder="ej. 9:00 – 18:00, descanso 14:00 – 15:00" />
+                </div>
+
+                {/* Actividades */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 6 }}>Actividades del día</label>
+                  <textarea value={day.actividades} onChange={e => update(activeDay, "actividades", e.target.value)} rows={3} style={taStyle} placeholder="Lista de actividades que realizarás durante el día..." />
+                </div>
+
+                {/* Objetivos */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 6 }}>Objetivo(s) del día</label>
+                  <textarea value={day.objetivos} onChange={e => update(activeDay, "objetivos", e.target.value)} rows={2} style={taStyle} placeholder="¿Qué debe quedar hecho o avanzado al final del día?" />
+                </div>
+
+                {/* Comentario cierre */}
+                <div style={{ background: canComment ? ORANGE_LIGHT : "#f5f5f5", border: `1.5px solid ${canComment ? ORANGE_BORDER : "#e0e0e0"}`, borderRadius: 10, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: canComment ? ORANGE_DARK : "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Comentario de cierre</label>
+                    <span style={{ fontSize: 10, color: canComment ? ORANGE_DARK : "#bbb", fontWeight: 700, textAlign: "right", flexShrink: 0 }}>
+                      {pastMidnight ? "⛔ Plazo vencido" : futureDay ? "⏳ Aún no disponible" : "Llenar antes de las 11:59 pm"}
+                    </span>
+                  </div>
+                  <textarea value={day.comentario} onChange={e => canComment && update(activeDay, "comentario", e.target.value)} disabled={!canComment} rows={3}
+                    style={{ ...taStyle, background: canComment ? "#fffdf7" : "#f0f0f0", color: canComment ? "#222" : "#bbb", border: `1px solid ${canComment ? "#e8d5b0" : "#e0e0e0"}`, cursor: canComment ? "text" : "not-allowed" }}
+                    placeholder={pastMidnight ? "El plazo para este día ya cerró." : futureDay ? "Disponible al llegar el día." : "¿Se logró lo planeado? ¿Qué pasó? ¿Algún bloqueo o avance relevante?"} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* NAV + EXPORT */}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => { setActiveDay(DAYS[Math.max(0, dayIdx - 1)]); setUbOpen(false); }} disabled={dayIdx === 0}
+                style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #ddd", background: "#fff", cursor: dayIdx === 0 ? "default" : "pointer", fontSize: 13, color: "#888", opacity: dayIdx === 0 ? 0.4 : 1 }}>← Anterior</button>
+              <button onClick={() => { setActiveDay(DAYS[Math.min(6, dayIdx + 1)]); setUbOpen(false); }} disabled={dayIdx === 6}
+                style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #ddd", background: "#fff", cursor: dayIdx === 6 ? "default" : "pointer", fontSize: 13, color: "#888", opacity: dayIdx === 6 ? 0.4 : 1 }}>Siguiente →</button>
+            </div>
+            <button onClick={handleExportCSV} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: ORANGE, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Descargar CSV</button>
+          </div>
+          <p style={{ textAlign: "center", fontSize: 11, color: "#bbb", marginTop: 14, paddingBottom: 8 }}>Los cambios se guardan automáticamente · ↑ indica sincronización con Google Sheets</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryView({ data, weekNum, year, member, memberObj, onExport }) {
+  return (
+    <div style={{ maxWidth: 900, margin: "24px auto 0", padding: "0 16px" }}>
+      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e0d8", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #f0ebe3", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>{member}</span>
+            <span style={{ fontSize: 12, color: "#aaa", marginLeft: 8 }}>{memberObj?.rol}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, color: "#aaa" }}>Semana {weekNum}</span>
+            <button onClick={onExport} style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px solid ${ORANGE}`, background: "transparent", color: ORANGE, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Descargar CSV</button>
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 500 }}>
+            <thead>
+              <tr style={{ background: "#faf8f5" }}>
+                {["Día", "Ubicación", "Horario", "Actividades", "Objetivos", "Cierre"].map(h => (
+                  <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: "#999", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, borderBottom: "1px solid #f0ebe3", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {DAYS.map((d, i) => {
+                const dd = data[d];
+                const rest = dd.descanso;
+                return (
+                  <tr key={d} style={{ background: rest ? "#f9fef9" : i % 2 === 0 ? "#fff" : "#fdfcfb", borderBottom: "1px solid #f5f2ee" }}>
+                    <td style={{ padding: "10px 12px", fontWeight: 700, color: rest ? "#81c784" : "#333", whiteSpace: "nowrap" }}>{d.slice(0,3)}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {rest ? <span style={{ color: "#81c784", fontSize: 11 }}>Descanso</span>
+                        : (dd.ubicacion||[]).length
+                          ? (dd.ubicacion||[]).map(u => <span key={u} style={{ display: "inline-block", background: ORANGE_LIGHT, color: ORANGE_DARK, border: `1px solid ${ORANGE_BORDER}`, borderRadius: 4, padding: "1px 6px", fontSize: 11, marginRight: 3, marginBottom: 2 }}>{u}</span>)
+                          : <span style={{ color: "#ddd" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 12px", color: "#666", whiteSpace: "nowrap" }}>{dd.horario || <span style={{ color: "#ddd" }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px", color: "#666", maxWidth: 200 }}>{dd.actividades || <span style={{ color: "#ddd" }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px", color: "#666", maxWidth: 160 }}>{dd.objetivos || <span style={{ color: "#ddd" }}>—</span>}</td>
+                    <td style={{ padding: "10px 12px", color: dd.comentario ? "#666" : "#ddd", maxWidth: 180, fontStyle: dd.comentario ? "normal" : "italic" }}>{dd.comentario || "Pendiente"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
