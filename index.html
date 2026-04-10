@@ -111,18 +111,18 @@ function App() {
     setData(stored ? JSON.parse(stored) : emptyWeek());
   }, [member, weekNum]);
 
-  const saveData = (newData) => {
+  const saveData = (newData, changedDay) => {
     if (!member) return;
     const key = `hapdplan_${member}_${currentYear}_w${weekNum}`;
     localStorage.setItem(key, JSON.stringify(newData));
     setSaved(true); setTimeout(() => setSaved(false), 2000);
-    // Sync to Google Sheet
+    // Sync only the changed day to Google Sheet
     const payload = {
       member,
       rol: memberObj?.rol || "",
       weekNum,
       weekRange: getWeekRange(weekNum, currentYear),
-      days: DAYS.map(d => ({ day: d, ...newData[d] }))
+      day: { day: changedDay, ...newData[changedDay] }
     };
     fetch(SCRIPT_URL, {
       method: "POST",
@@ -134,7 +134,7 @@ function App() {
 
   const update = (day, field, val) => {
     const newData = { ...data, [day]: { ...data[day], [field]: val } };
-    setData(newData); saveData(newData);
+    setData(newData); saveData(newData, day);
   };
 
   const toggleUb = (day, ub) => {
